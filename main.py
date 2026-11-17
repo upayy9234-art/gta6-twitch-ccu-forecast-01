@@ -45,6 +45,21 @@ scale, lower is better):
   per case: Wolverine 0.176, RDR2 0.107, God of War Ragnarok 0.111,
   Spider-Man 2 0.225. Typical miss ~25%, 90% coverage ~0.7-0.9.
 
+Revision round, 17 Nov 2026 (leave-one-out over the 4 practice cases,
+final-like comparable set of 42): the submitted configuration was
+re-tested against every variant tried during the build. Spread scale
+0.7-0.8 is a flat optimum (mean loss 0.154 at 0.75-0.8); 3-point
+smoothing of the log-ratio profile (0.157), clamping log(p1) to the
+comparables' range (0.158), shrinking the slope toward the median
+profile (0.172-0.178), and dropping the two "midnight local expected"
+comparables from the clean subset (0.163) are all worse, so none was
+adopted. The classifier was checked against all 38 unlock texts: the
+clean set is the 9 rolling-midnight, no-early-access, non-F2P launches
+(including the two Sony "midnight local expected" ones, which the test
+above shows belong), and every excluded launch is out for a stated
+reason (simultaneous global unlock, early access, F2P/live-service, or
+no usable unlock text). No forecast changed in this revision.
+
 Research notes (sources in NOTES.md): GTA VI releases 19 Nov 2026 on PS5
 and Xbox Series X|S (Rockstar, 6 Nov 2025; previously dated 26 May 2026);
 midnight-local rolling unlock; Trailer 1 drew 93m YouTube views in 24h
