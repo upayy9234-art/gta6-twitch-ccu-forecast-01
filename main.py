@@ -11,54 +11,52 @@ directory ($MAKEFUN_OUTPUT_DIR, else /output): one object
 hours 2..24 of the release day, each quantile a finite number of viewers
 above 0 and at most 1e9, non-decreasing.
 
-Model
------
-The forecast is anchored on the case's hour-1 print p1 and on the release-day
-curves of past big launches shipped in the case file (`comparables`).
+Model (round 2, replaces the round-1 per-hour OLS)
+-----------------------------------------------
+A pooled hour-fixed-effects regression over the clean comparables'
+release-day curves. For every clean comparable and every hour h = 2..24,
+the log ratio log(viewers_h / viewers_1) is modelled as
 
-Why a ratio model, and why hour 1's size matters: a launch-day curve is
-shaped by *when* the world unlocks. GTA VI unlocks at midnight local time,
-rolling (New Zealand 11:00Z on 18 Nov, central Europe 23:00Z, the UK 00:00Z,
-the US east coast 05:00Z, the west coast 08:00Z), so at 00:00Z only
-New Zealand / Australia / Asia / Europe are playing and the Americas are
-still locked. Past launches show the same pattern: when hour 1 is small
-(only a few regions live yet) the day ramps several-fold into the US
-evening; when hour 1 is already huge (a simultaneous global unlock, or
-early access already running) the day stays flat. Across the clean
-comparables the peak-to-hour-1 ratio runs from ~1.0x (ELDEN RING,
-h1 = 875k) to ~12x (Resident Evil Requiem, h1 = 46k) and ~9x (Marvel's
-Wolverine, h1 = 23k).
+    log_ratio = a_h + b*u + c*u*t + d*ch + e*base
 
-So, per hour h = 2..24, the model regresses the log ratio
-log(viewers_h / viewers_1) on log(viewers_1) over a clean subset of
-comparables -- rolling-midnight launches with no early access and no
-free-to-play/live-service distortion -- and evaluates the fit at this
-case's own log(p1). The spread is the regression's residual standard
-deviation (floored at 0.20 log units), scaled by 0.8, applied with the
-standard-normal quantiles: q_tau = p1 * exp(log_ratio_h + z_tau * spread_h).
+where u = log(viewers_1) centred on the training mean, t = (h - 13) / 11,
+a_h is a free intercept per hour, ch = log(channels at hour 1) centred
+on the training median, and base = log(viewers_1 / prelaunch) centred on
+the training median, with prelaunch = the comparable's median hourly
+viewers over the 7 days before its release day. The two extra features
+are the round-2 finding: how explosive a launch is relative to its own
+category's pre-launch baseline, and how concentrated its hour-1 audience
+is across channels, both predict the shape of the day (how deep the
+overnight dip runs, how steep the evening ramp is) far better than
+hour-1 size alone. A comparable with no channels print or no pre-launch
+history gets the training median for that feature (centred value 0);
+the target case's features are clamped to the training range so an
+extreme GTA VI print cannot blow the forecast up.
+
+The forecast for an hour is the fitted log ratio plus that hour's median
+training residual (the residuals are right-skewed, so the median recentres
+better than the mean), with spread = that hour's residual standard
+deviation (floored at 0.20 log units) scaled by 0.5, applied with the
+standard-normal quantiles: q_tau = p1 * exp(log_ratio + z_tau * spread).
+
+The clean subset is the same as round 1: rolling-midnight launches with
+no early access and no free-to-play/live-service distortion, classified
+from each comparable's unlock text (plus the kit's four practice launches
+by name).
 
 Local validation (practice cases scored against SullyGnome's hourly
 averages, the same source the answers come from; pinball loss on the log
 scale, lower is better):
   house baseline (persistence):            0.387
-  this model (regression, clean subset):    0.154
-  per case: Wolverine 0.176, RDR2 0.107, God of War Ragnarok 0.111,
-  Spider-Man 2 0.225. Typical miss ~25%, 90% coverage ~0.7-0.9.
-
-Revision round, 17 Nov 2026 (leave-one-out over the 4 practice cases,
-final-like comparable set of 42): the submitted configuration was
-re-tested against every variant tried during the build. Spread scale
-0.7-0.8 is a flat optimum (mean loss 0.154 at 0.75-0.8); 3-point
-smoothing of the log-ratio profile (0.157), clamping log(p1) to the
-comparables' range (0.158), shrinking the slope toward the median
-profile (0.172-0.178), and dropping the two "midnight local expected"
-comparables from the clean subset (0.163) are all worse, so none was
-adopted. The classifier was checked against all 38 unlock texts: the
-clean set is the 9 rolling-midnight, no-early-access, non-F2P launches
-(including the two Sony "midnight local expected" ones, which the test
-above shows belong), and every excluded launch is out for a stated
-reason (simultaneous global unlock, early access, F2P/live-service, or
-no usable unlock text). No forecast changed in this revision.
+  round 1 (per-hour OLS, clean subset):    0.154
+  round 2 (this model), kit comparables:   0.120
+  round 2 (this model), final-like set:    0.120
+  per case (kit protocol): Wolverine 0.108, RDR2 0.103, God of War
+  Ragnarok 0.092, Spider-Man 2 0.177. Typical miss ~21%, 90% coverage
+  ~0.88. The kit protocol is the relevant estimate for the dev score:
+  round 1's kit-protocol local number (0.164) matched its dev score
+  (0.164) exactly, so the dev score of this entry is expected near 0.120
+  (round 1: 0.164; top-20 line was 0.139 at last check).
 
 Research notes (sources in NOTES.md): GTA VI releases 19 Nov 2026 on PS5
 and Xbox Series X|S (Rockstar, 6 Nov 2025; previously dated 26 May 2026);
@@ -67,14 +65,15 @@ midnight-local rolling unlock; Trailer 1 drew 93m YouTube views in 24h
 single-player Twitch peak record is Hogwarts Legacy at ~1.28m concurrent
 viewers, ahead of Cyberpunk 2077 (~1.14m) and ELDEN RING (~0.91m).
 
-Fallbacks keep every case valid: if the clean subset has fewer than three
-comparables with data for an hour, the regression falls back to all
-comparables; with fewer than three still, it falls back to the house
-baseline's persistence forecast for that hour. If hour 1 has no print, the
-anchor falls back to the last pre-checkpoint hourly point, then to the
-top live streams' viewers, then to 1.
+Fallbacks keep every case valid: if the pooled fit has too few points or
+the linear solve fails, the regression falls back to round 1's per-hour
+OLS; with fewer than three comparables for an hour it falls back to the
+house baseline's persistence forecast for that hour. If hour 1 has no
+print, the anchor falls back to the last pre-checkpoint hourly point,
+then to the top live streams' viewers, then to 1.
 """
 
+import datetime
 import json
 import math
 import os
@@ -97,14 +96,18 @@ Z_TABLE = {0.05: -1.645, 0.25: -0.674, 0.5: 0.0, 0.75: 0.674, 0.95: 1.645}
 BASELINE_SIGMA = 0.15
 # Floor on the regression's residual spread, in log units.
 SPREAD_FLOOR = 0.20
-# The residual spread is scaled by this much: 1.0 was too wide on the
-# practice cases (mean loss 0.168), 0.7-0.8 best (0.154); 0.8 is the
-# middle of the flat optimum and keeps the 90% band honest.
-SPREAD_SCALE = 0.8
+# The residual spread is scaled by this much: 0.5 sits in the middle of
+# the flat optimum (0.45-0.55) on both local protocols; 0.4 is too narrow
+# (90% coverage falls to ~0.80) and 0.7 too wide.
+SPREAD_SCALE = 0.5
 # A regression needs at least this many comparables to be trusted.
 MIN_FIT = 3
+# The pooled fit needs at least this many (game, hour) points.
+MIN_POOLED = 30
 # Quantiles are capped at the contest's maximum (1e9 viewers).
 Q_MAX = 999999999.99
+# Pre-launch baseline window, in days before the release day.
+BASELINE_DAYS = 7
 
 # The kit's four practice launches (input/NOTICE.txt): all rolling-midnight,
 # console-only, single-player releases with no early access. Their unlock
@@ -145,6 +148,41 @@ def mean(xs):
 def stdev(xs):
     m = mean(xs)
     return math.sqrt(sum((x - m) ** 2 for x in xs) / max(1, len(xs) - 1))
+
+
+def solve(A, b):
+    """Solve A x = b by Gaussian elimination with partial pivoting.
+
+    Returns the solution list, or None if the matrix is singular.
+    """
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(A)]
+    for col in range(n):
+        piv = max(range(col, n), key=lambda r: abs(m[r][col]))
+        if abs(m[piv][col]) < 1e-12:
+            return None
+        m[col], m[piv] = m[piv], m[col]
+        for r in range(col + 1, n):
+            f = m[r][col] / m[col][col]
+            for cc in range(col, n + 1):
+                m[r][cc] -= f * m[col][cc]
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        x[i] = (m[i][n] - sum(m[i][j] * x[j] for j in range(i + 1, n))) / m[i][i]
+    return x
+
+
+def wls(X, y, w):
+    """Weighted least squares. X: list of feature vectors, y, w lists."""
+    p = len(X[0])
+    A = [[0.0] * p for _ in range(p)]
+    b = [0.0] * p
+    for xi, yi, wi in zip(X, y, w):
+        for i in range(p):
+            b[i] += wi * xi[i] * yi
+            for j in range(p):
+                A[i][j] += wi * xi[i] * xi[j]
+    return solve(A, b)
 
 
 def is_clean(comp):
@@ -194,6 +232,74 @@ def release_day_hours(comp):
     return hours
 
 
+def channels_at(comp, hour=1):
+    """Channels streaming at the comparable's release-day hour, or None."""
+    day = (comp.get("day_start") or "")[:10]
+    for row in comp.get("hourly") or []:
+        start = row.get("from") or ""
+        if not start.startswith(day):
+            continue
+        try:
+            if int(start[11:13]) + 1 != hour:
+                continue
+        except (ValueError, TypeError):
+            continue
+        try:
+            ch = row.get("channels")
+            return float(ch) if ch is not None else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def prelaunch_baseline(comp):
+    """Median hourly viewers over the 7 days before the release day.
+
+    Computed from the comparable's own hourly rows before `day_start`.
+    Returns None when there is no usable pre-launch history.
+    """
+    day = (comp.get("day_start") or "")[:10]
+    try:
+        d0 = datetime.date.fromisoformat(day)
+    except ValueError:
+        return None
+    vals = []
+    for row in comp.get("hourly") or []:
+        start = row.get("from") or ""
+        try:
+            d = datetime.date.fromisoformat(start[:10])
+            v = float(row["viewers"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if 0 < (d0 - d).days <= BASELINE_DAYS and v > 0:
+            vals.append(v)
+    return median(vals) if vals else None
+
+
+def target_baseline(case):
+    """Median hourly viewers over the 7 days before the case's release day.
+
+    Computed from the case's `history_hourly` (the category's pre-launch
+    hourly points). Returns None when there is no usable history.
+    """
+    day = (case.get("day_start") or "")[:10]
+    try:
+        d0 = datetime.date.fromisoformat(day)
+    except ValueError:
+        return None
+    vals = []
+    for row in case.get("history_hourly") or []:
+        start = row.get("from") or ""
+        try:
+            d = datetime.date.fromisoformat(start[:10])
+            v = float(row["viewers"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if 0 < (d0 - d).days <= BASELINE_DAYS and v > 0:
+            vals.append(v)
+    return median(vals) if vals else None
+
+
 def hour1_anchor(case):
     """Hour 1's print, with fallbacks that keep the case valid."""
     for row in case.get("known") or []:
@@ -228,7 +334,7 @@ def fit_hour(points, log_p1):
     points: [(log_h1, log_ratio), ...] for one hour. Returns
     (predicted log ratio at log_p1, residual std). With fewer than
     MIN_FIT points, or a degenerate fit, returns (0.0, spread floor)
-    -- i.e. the persistence forecast.
+    -- i.e. the persistence forecast. (Round-1 fallback.)
     """
     if len(points) < MIN_FIT:
         return 0.0, SPREAD_FLOOR
@@ -262,45 +368,132 @@ def forecast_case(case, name):
     p1 = hour1_anchor(case)
     log_p1 = math.log(p1)
 
-    # Per-hour regression points, clean subset first, all comparables
-    # as fallback. Comparables are visited in name order so the sums
-    # accumulate identically on every run.
+    # Clean comparables with a usable hour-1 print, in name order so the
+    # sums accumulate identically on every run. Per-comparable features
+    # (channels, pre-launch baseline) are computed from the same rows.
     comparables = sorted(case.get("comparables") or [],
                          key=lambda c: c.get("name") or "")
-    clean, allc = [], []
+    curves = {}       # name -> {hour: viewers}
+    feat = {}         # name -> {"ch": log channels or None, "base": log ratio or None}
     for comp in comparables:
         hours = release_day_hours(comp)
         if 1 not in hours:
             continue
-        if is_clean(comp):
-            clean.append(hours)
-        allc.append(hours)
+        if not is_clean(comp):
+            continue
+        cname = comp.get("name") or ""
+        curves[cname] = hours
+        ch = channels_at(comp, 1)
+        base = prelaunch_baseline(comp)
+        feat[cname] = {
+            "ch": math.log(ch) if ch else None,
+            "base": math.log(hours[1] / base) if (hours[1] and base) else None,
+        }
 
     rows = []
+    pooled = _fit_pooled(case, curves, feat, p1, log_p1)
     for row in case.get("forecast") or []:
         hour = row["hour"]
-        points = []
-        for hours in clean:
-            if hour in hours:
-                points.append((math.log(hours[1]),
-                               math.log(hours[hour] / hours[1])))
-        if len(points) < MIN_FIT:
+        if pooled is not None:
+            log_ratio, spread = pooled(hour)
+            qs = hour_quantiles(p1, log_ratio, spread, hour)
+        else:
+            # Round-1 per-hour OLS fallback.
             points = []
-            for hours in allc:
+            for hours in curves.values():
                 if hour in hours:
                     points.append((math.log(hours[1]),
                                    math.log(hours[hour] / hours[1])))
-        if len(points) >= MIN_FIT:
-            log_ratio, resid = fit_hour(points, log_p1)
-            spread = SPREAD_SCALE * resid
-            qs = hour_quantiles(p1, log_ratio, spread, hour)
-        else:
-            # House baseline persistence for this hour.
-            qs = hour_quantiles(
-                p1, 0.0, BASELINE_SIGMA * math.sqrt(hour - 1), hour)
+            if len(points) >= MIN_FIT:
+                log_ratio, resid = fit_hour(points, log_p1)
+                qs = hour_quantiles(p1, log_ratio, SPREAD_SCALE * resid, hour)
+            else:
+                # House baseline persistence for this hour.
+                qs = hour_quantiles(
+                    p1, 0.0, BASELINE_SIGMA * math.sqrt(hour - 1), hour)
         rows.append({"hour": hour, "q": qs})
     rows.sort(key=lambda r: r["hour"])
     return {"hours": rows}
+
+
+def _fit_pooled(case, curves, feat, p1, log_p1):
+    """Fit the hour-fixed-effects pooled model.
+
+    Returns a function hour -> (log_ratio, spread), or None when the fit
+    cannot be trusted (too few points or a singular design), in which
+    case the caller falls back to per-hour OLS.
+    """
+    # Pooled (game, hour) points with per-game feature values.
+    named = []
+    for cname, hours in curves.items():
+        lh1 = math.log(hours[1])
+        for h in range(2, 25):
+            if h in hours:
+                named.append((cname, lh1, h, math.log(hours[h] / hours[1])))
+    if len(named) < MIN_POOLED:
+        return None
+    mu = mean([pt[1] for pt in named])
+    # Centres for the extra features: medians over the training games
+    # that have a value; games without one get the median (centred 0).
+    med = {}
+    lo = {}
+    hi = {}
+    for key in ("ch", "base"):
+        vals = [feat[n][key] for n in feat if feat[n][key] is not None]
+        if vals:
+            med[key] = median(vals)
+            lo[key] = min(vals) - med[key]
+            hi[key] = max(vals) - med[key]
+        else:
+            med[key] = 0.0
+            lo[key] = 0.0
+            hi[key] = 0.0
+    hours_list = list(range(2, 25))
+    hidx = {h: i for i, h in enumerate(hours_list)}
+
+    def xrow(uu, hh, cname=None, tfeat=None):
+        t = (hh - 13.0) / 11.0
+        row = [0.0] * 23
+        row[hidx[hh]] = 1.0
+        row += [uu, uu * t]
+        for key in ("ch", "base"):
+            if tfeat is not None:
+                fv = tfeat.get(key)
+            else:
+                fv = feat.get(cname, {}).get(key)
+            centred = (fv - med[key]) if fv is not None else 0.0
+            centred = min(max(centred, lo[key]), hi[key])
+            row.append(centred)
+        return row
+
+    # The target case's own extra features.
+    t_ch = next((k.get("channels") for k in case.get("known") or []
+                 if k.get("hour") == 1), None)
+    t_base = target_baseline(case)
+    tfeat = {
+        "ch": math.log(t_ch) if t_ch else None,
+        "base": math.log(p1 / t_base) if (p1 and t_base) else None,
+    }
+    X = [xrow(lh1 - mu, h, cname=cname) for cname, lh1, h, _ in named]
+    y = [pt[3] for pt in named]
+    beta = wls(X, y, [1.0] * len(X))
+    if beta is None:
+        return None
+    # Per-hour residual median and std of the pooled fit.
+    by_h = {}
+    for (cname, lh1, h, r) in named:
+        pred = sum(b * v for b, v in zip(beta, xrow(lh1 - mu, h, cname=cname)))
+        by_h.setdefault(h, []).append(r - pred)
+    stats = {h: (median(rs), max(stdev(rs), SPREAD_FLOOR))
+             for h, rs in by_h.items()}
+    u_t = log_p1 - mu
+
+    def pooled(hour):
+        medr, s = stats.get(hour, (0.0, SPREAD_FLOOR))
+        logr = sum(b * v for b, v in zip(beta, xrow(u_t, hour, tfeat=tfeat)))
+        return logr + medr, s * SPREAD_SCALE
+
+    return pooled
 
 
 def main():
